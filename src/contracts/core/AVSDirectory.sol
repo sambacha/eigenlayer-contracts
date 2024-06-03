@@ -6,6 +6,7 @@ import "@openzeppelin-upgrades/contracts/access/OwnableUpgradeable.sol";
 import "@openzeppelin-upgrades/contracts/security/ReentrancyGuardUpgradeable.sol";
 import "../permissions/Pausable.sol";
 import "../libraries/EIP1271SignatureUtils.sol";
+import "../libraries/EpochUtils.sol";
 import "./AVSDirectoryStorage.sol";
 
 contract AVSDirectory is
@@ -29,7 +30,7 @@ contract AVSDirectory is
      * @dev Initializes the immutable addresses of the strategy mananger, delegationManager, slasher, 
      * and eigenpodManager contracts
      */
-    constructor(IDelegationManager _delegation) AVSDirectoryStorage(_delegation) {
+    constructor(IDelegationManager _delegation, IStrategyManager _strategyManager) AVSDirectoryStorage(_delegation, _strategyManager) {
         _disableInitializers();
         ORIGINAL_CHAIN_ID = block.chainid;
     }
@@ -49,8 +50,68 @@ contract AVSDirectory is
     }
 
     /*******************************************************************************
-                            EXTERNAL FUNCTIONS 
+                            Operator<>AVS Registration
     *******************************************************************************/
+
+    /**
+     * @notice Called by the AVS's service manager contract to register an oprator to an operator set
+     * @param operator The address of the operator to register.
+     * @param operatorSetId The ID of the operator set to register the operator to.
+     */
+    function registerOperatorToOperatorSet(
+        address operator,
+        bytes4 operatorSetId
+    ) external onlyWhenNotPaused(PAUSED_OPERATOR_REGISTER_DEREGISTER_TO_AVS) {
+        require(
+            operatorSetRegistrations[msg.sender][operator][operatorSetId] != true,
+            "AVSDirectory.registerOperatorToOperatorSet: operator already registered to operator set"
+        )
+        // TODO: check that the operator is allowing registrations for this operator set
+
+        // Update state
+        operatorSetRegistrations[msg.sender][operator][operatorSetId] = true;
+        operatorAVSOperatorSetCount[msg.sender][operator] += 1;
+
+        // Set the avs as an operator set AVS
+        if (!isOperatorSetAVS[msg.sender]) {
+            isOperatorSetAVS[msg.sender] = true;
+        }
+        // Set the operator as registered for the AVS if not already
+        if (avsOperatorStatus[msg.sender][operator] != OperatorAVSRegistrationStatus.REGISTERED) {
+            avsOperatorStatus[msg.sender][operator] = OperatorAVSRegistrationStatus.REGISTERED;
+            emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.REGISTERED, EpochUtils.currentEpoch());
+        }
+
+        emit OperatorAddedToOperatorSet(operator, msg.sender, operatorSetId, EpochUtils.currentEpoch());
+    }
+
+    /**
+     * @notice Called by an avs to deregister an operator from an operator set.
+     * @param operator The address of the operator to deregister.
+     * @param operatorSetId The ID of the operator set to register the operator to.
+     */
+    function deregisterOperatorFromOperatorSet(
+        address operator,
+        bytes4 operatorSetId
+    ) external onlyWhenNotPaused(PAUSED_OPERATOR_REGISTER_DEREGISTER_TO_AVS) {
+        require(
+            avsOperatorStatus[msg.sender][operator] == OperatorAVSRegistrationStatus.REGISTERED,
+            "AVSDirectory.deregisterOperatorFromOperatorSet: operator not registered"
+        );
+        require(
+            operatorSetRegistrations[msg.sender][operator][operatorSetId] == true, 
+            "AVSDirectory.deregisterOperatorFromOperatorSet: operator not registered to operator set"
+        );
+        
+        operatorAVSOperatorSetCount[msg.sender][operator] -= 1;
+
+        if (operatorAVSOperatorSetCount[msg.sender][operator] == 0) {
+            avsOperatorStatus[msg.sender][operator] = OperatorAVSRegistrationStatus.UNREGISTERED;
+            emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.UNREGISTERED, EpochUtils.currentEpoch() + 2);
+        }
+
+        emit OperatorRemovedFromOperatorSet(operator, msg.sender, operatorSetId, EpochUtils.currentEpoch() + 2);
+    }
 
 
     /**
@@ -78,6 +139,10 @@ contract AVSDirectory is
         require(
             delegation.isOperator(operator),
             "AVSDirectory.registerOperatorToAVS: operator not registered to EigenLayer yet");
+        require(
+            isOperatorSetAVS[msg.sender],
+            "AVSDirectory.registerOperatorToAVS: AVS is not a legacy AVS"
+        )
 
         // Calculate the digest hash
         bytes32 operatorRegistrationDigestHash = calculateOperatorAVSRegistrationDigestHash({
@@ -100,7 +165,8 @@ contract AVSDirectory is
         // Mark the salt as spent
         operatorSaltIsSpent[operator][operatorSignature.salt] = true;
 
-        emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.REGISTERED);
+        // Legacy registrations will be active from the current epoch
+        emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.REGISTERED, EpochUtils.currentEpoch());
     }
 
     /**
@@ -116,8 +182,21 @@ contract AVSDirectory is
         // Set the operator as deregistered
         avsOperatorStatus[msg.sender][operator] = OperatorAVSRegistrationStatus.UNREGISTERED;
 
-        emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.UNREGISTERED);
+        emit OperatorAVSRegistrationStatusUpdated(operator, msg.sender, OperatorAVSRegistrationStatus.UNREGISTERED, EpochUtils.currentEpoch() + 2);
     }
+
+    /**
+     * @notice Called by an operator to cancel a salt that has been used to register with an AVS.
+     * @param salt A unique and single use value associated with the approver signature.
+     */
+    function cancelSalt(bytes32 salt) external {
+        require(!operatorSaltIsSpent[msg.sender][salt], "AVSDirectory.cancelSalt: cannot cancel spent salt");
+        operatorSaltIsSpent[msg.sender][salt] = true;
+    }
+
+    /*******************************************************************************
+                                AVS Configurations
+    *******************************************************************************/
 
     /**
      * @notice Called by an avs to emit an `AVSMetadataURIUpdated` event indicating the information has updated.
@@ -128,12 +207,47 @@ contract AVSDirectory is
     }
 
     /**
-     * @notice Called by an operator to cancel a salt that has been used to register with an AVS.
-     * @param salt A unique and single use value associated with the approver signature.
+     * @notice Called by an avs to add a strategy to its operator set
+     * @param operatorSetID the ID of the operator set
+     * @param strategies the list strategies to add to the operator set
      */
-    function cancelSalt(bytes32 salt) external {
-        require(!operatorSaltIsSpent[msg.sender][salt], "AVSDirectory.cancelSalt: cannot cancel spent salt");
-        operatorSaltIsSpent[msg.sender][salt] = true;
+    function addStrategiesToOperatorSet(
+        bytes4 operatorSetID,
+        IStrategy[] calldata strategies
+    ) {
+        uint256 strategiesToAdd = strategies.length;
+        for (uint256 i = 0; i < strategiesToAdd; i++) {
+            // Require that the strategy is valid 
+            IStrategy strategy = strategies[i];
+            require(
+                strategyManager.strategyIsWhitelistedForDeposit(strategy) || strategy == beaconChainETHStrategy,
+                "AVSDirectory.addStrategiesToOperatorSet: invalid strategy considered"
+            );
+            require(
+                !avsOperatorSetStrategies[msg.sender][operatorSetID][strategy],
+                "AVSDirectory.addStrategiesToOperatorSet: strategy already added"
+            )
+            emit OperatorSetStrategyAdded(msg.sender, operatorSetID, strategies[i]);
+        }
+    }
+
+    /**
+     * @notice Called by an avs to remove a strategy to its operator set
+     * @param operatorSetID the ID of the operator set
+     * @param strategies the list strategies to remove from the operator set
+     */
+    function removeStrategiesFromOperatorSet(
+        bytes4 operatorSetID,
+        IStrategy[] calldata strategies
+    ) {
+        uint256 strategiesToRemove = strategies.length;
+        for (uint256 i = 0; i < strategiesToRemove; i++) {
+            require(
+                avsOperatorSetStrategies[msg.sender][operatorSetID][strategies[i]],
+                "AVSDirectory.removeStrategiesFromOperatorSet: strategy not added"
+            )
+            emit OperatorSetStrategyRemoved(msg.sender, operatorSetID, strategies[i]);
+        }
     }
 
     /*******************************************************************************
