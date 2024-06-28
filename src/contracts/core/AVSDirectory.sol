@@ -15,6 +15,8 @@ contract AVSDirectory is
     AVSDirectoryStorage,
     ReentrancyGuardUpgradeable
 {
+    using LibBit for uint256;
+
     /// @dev Index for flag that pauses operator register/deregister to avs when set.
     uint8 internal constant PAUSED_OPERATOR_REGISTER_DEREGISTER_TO_AVS = 0;
 
@@ -167,6 +169,8 @@ contract AVSDirectory is
         // Mutate calling AVS to operator set AVS status, preventing further legacy registrations.
         if (!isOperatorSetAVS[msg.sender]) isOperatorSetAVS[msg.sender] = true;
 
+        (uint256 epochSet, uint8 epochSetIndex) = currentEpochSet();
+
         // Loop over `operatorSetIds` array and register `operator` for each item.
         for (uint256 i = 0; i < operatorSetIds.length; ++i) {
             // Assert avs is on standby mode for the given `operator` and `operatorSetIds[i]`.
@@ -179,13 +183,16 @@ contract AVSDirectory is
 
             // Assert `operator` has not already been registered to `operatorSetIds[i]`.
             require(
-                !isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]],
+                !isOperatorInOperatorSet(msg.sender, operator, operatorSetIds[i]),
                 "AVSDirectory.registerOperatorToOperatorSets: operator already registered to operator set"
             );
 
-            // Mutate `isOperatorInOperatorSet` to `true` for `operatorSetIds[i]`.
-            isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]] = true;
+            uint256 bitmap = _isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]][epochSet];
 
+            _isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]][epochSet] =
+                bitmap.setLeft(bitmap.getLeft().flip(epochSetIndex));
+
+            // TODO: Update events to include new params...
             emit OperatorAddedToOperatorSet(operator, OperatorSet({avs: msg.sender, id: operatorSetIds[i]}));
         }
 
@@ -211,17 +218,24 @@ contract AVSDirectory is
         address operator,
         uint32[] calldata operatorSetIds
     ) external onlyWhenNotPaused(PAUSED_OPERATOR_REGISTER_DEREGISTER_TO_AVS) {
+        (uint256 epochSet, uint8 epochSetIndex) = currentEpochSet();
         // Loop over `operatorSetIds` array and deregister `operator` for each item.
         for (uint256 i = 0; i < operatorSetIds.length; ++i) {
             // Assert `operator` is registered for this iterations operator set.
             require(
-                isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]],
+                isOperatorInOperatorSet(msg.sender, operator, operatorSetIds[i]),
                 "AVSDirectory.deregisterOperatorFromOperatorSet: operator not registered for operator set"
             );
 
-            // Mutate `isOperatorInOperatorSet` to `false` for `operatorSetIds[i]`.
-            isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]] = false;
+            uint256 bitmap = _isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]][epochSet];
 
+            unchecked {
+                // TODO: Need to wrap to next epoch set if n + 2 is greater than 128.
+                _isOperatorInOperatorSet[msg.sender][operator][operatorSetIds[i]][epochSet] =
+                    bitmap.setRight(bitmap.getRight().flip(epochSetIndex + 2));
+            }
+
+            // TODO: Update events to include new params...
             emit OperatorRemovedFromOperatorSet(operator, OperatorSet({avs: msg.sender, id: operatorSetIds[i]}));
         }
 

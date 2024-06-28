@@ -4,8 +4,11 @@ pragma solidity ^0.8.12;
 import "../interfaces/IAVSDirectory.sol";
 import "../interfaces/IStrategyManager.sol";
 import "../interfaces/IDelegationManager.sol";
+import "../libraries/LibBit.sol";
 
 abstract contract AVSDirectoryStorage is IAVSDirectory {
+    using LibBit for uint256;
+
     /// @notice The EIP-712 typehash for the contract's domain
     bytes32 public constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
@@ -21,7 +24,15 @@ abstract contract AVSDirectoryStorage is IAVSDirectory {
     /// @notice The EIP-712 typehash for the `StandbyParams` struct used by the contract
     bytes32 public constant OPERATOR_STANDBY_UPDATE =
         keccak256("OperatorStandbyUpdate(StandbyParam[] standbyParams,bytes32 salt,uint256 expiry)");
-    
+
+    uint256 internal constant EPOCH_LENGTH = 7 days;
+
+    uint256 internal constant EPOCHS_PER_EPOCH_SET = 128;
+
+    uint256 internal constant EPOCH_SET_LENGTH = EPOCH_LENGTH * EPOCHS_PER_EPOCH_SET;
+
+    uint256 internal immutable START_TIME = block.timestamp;
+
     /// @notice The DelegationManager contract for EigenLayer
     IDelegationManager public immutable delegation;
 
@@ -45,8 +56,11 @@ abstract contract AVSDirectoryStorage is IAVSDirectory {
     /// @notice Mapping: AVS => whether or not the AVS uses operator set
     mapping(address => bool) public isOperatorSetAVS;
 
-    /// @notice Mapping: avs => operator => operatorSetID => whether the operator is registered for the operator set
-    mapping(address => mapping(address => mapping(uint32 => bool))) public isOperatorInOperatorSet;
+    // NOTE: Removed original isOperatorInOperator(avs, operator, operatorSetId) => bool mapping...
+
+    /// @notice Mapping: (avs, operator, operatorSetId, epochSetId) => isOperatorInOperatorSet
+    mapping(address => mapping(address => mapping(uint32 => mapping(uint256 => uint256)))) internal
+        _isOperatorInOperatorSet;
 
     /// @notice Mapping: avs => operator => number of operator sets the operator is registered for the AVS
     mapping(address => mapping(address => uint256)) public operatorAVSOperatorSetCount;
@@ -57,6 +71,56 @@ abstract contract AVSDirectoryStorage is IAVSDirectory {
     constructor(IDelegationManager _delegation, IStrategyManager _strategyManager) {
         delegation = _delegation;
         strategyManager = _strategyManager;
+    }
+
+    function currentEpoch() public view returns (uint256) {
+        // The parameter `START_TIME` must be less than or equal to `block.timestamp`.
+        uint256 elapsed = block.timestamp - START_TIME;
+        unchecked {
+            // If `elapsed` is less than `EPOCH_LENGTH` the quotient is rounded down to zero.
+            return elapsed / EPOCH_LENGTH;
+        }
+    }
+
+    function currentEpochSet() public view returns (uint256 epochSet, uint8 epochSetIndex) {
+        // The parameter `START_TIME` must be less than or equal to `block.timestamp`.
+        uint256 elapsed = block.timestamp - START_TIME;
+        unchecked {
+            // If `elapsed` is less than `EPOCH_SET_LENGTH` the quotient is rounded down to zero.
+            epochSet = elapsed / EPOCH_SET_LENGTH;
+
+            // If `elapsed` is less than `EPOCH_LENGTH` the quotient is rounded down to zero.
+            epochSetIndex = uint8((elapsed / EPOCH_LENGTH) % EPOCHS_PER_EPOCH_SET);
+        }
+    }
+
+    function isOperatorInOperatorSet(
+        address avs,
+        address operator,
+        uint32 operatorSetId
+    ) public virtual returns (bool included) {
+        unchecked {
+            // This loop should probably from now backwards...
+
+            // If `currentEpoch()` is less than `EPOCHS_PER_EPOCH_SET` the quotient is rounded down to zero.
+            uint256 currentEpochSetId = currentEpoch() / EPOCHS_PER_EPOCH_SET;
+
+            // Iterate through epoch sets and see if operator is registered to the given operator set.
+            for (uint256 i; i < currentEpochSetId; ++i) {
+                // If operator has registered...
+                if (_isOperatorInOperatorSet[avs][operator][operatorSetId][i].getLeft() != 0) {
+                    // Iterate through the remaining epoch sets up until now and
+                    // assert a deregistration has not occured.
+                    for (uint256 j = i; j < currentEpochSetId; ++j) {
+                        if (_isOperatorInOperatorSet[avs][operator][operatorSetId][j].getRight() != 0) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+            }
+        }
     }
 
     /**
