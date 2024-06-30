@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import "forge-std/test_Correctness_.sol";
+import "forge-std/Test.sol";
 import "../../contracts/libraries/LibBit.sol";
 
-contract LibBittest_Correctness_ is test_Correctness_ {
+contract LibBitTest is Test {
     function test_Correctness_Flip() public {
         uint256 x = 0;
         uint8 n = 0;
