@@ -38,7 +38,7 @@ library LibBit {
     function setRight(uint256 x, uint256 y) internal pure returns (uint256 r) {
         /// @solidity memory-safe-assembly
         assembly {
-            r := or(and(x, shl(0x80, not(0))), y)
+            r := or(and(shl(0x80, not(0)), x), y)
         }
     }
 
