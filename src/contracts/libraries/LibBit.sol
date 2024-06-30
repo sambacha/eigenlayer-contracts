@@ -14,7 +14,7 @@ library LibBit {
     function getLeft(uint256 x) internal pure returns (uint256 r) {
         /// @solidity memory-safe-assembly
         assembly {
-            r := shr(128, x)
+            r := shr(0x80, x)
         }
     }
 
@@ -22,15 +22,15 @@ library LibBit {
     function getRight(uint256 x) internal pure returns (uint256 r) {
         /// @solidity memory-safe-assembly
         assembly {
-            r := and(shr(128, not(0)), x)
+            r := and(shr(0x80, not(0)), x)
         }
     }
 
-    /// @dev Updates the first 128 bits of `x` with `leftValue`.
+    /// @dev Updates the first 128 bits of `x` with `y`.
     function setLeft(uint256 x, uint256 y) internal pure returns (uint256 r) {
         /// @solidity memory-safe-assembly
         assembly {
-            r := or(and(0xffffffffffffffffffffffffffffffff, x), shl(128, y))
+            r := or(and(shr(0x80, not(0)), x), shl(0x80, y))
         }
     }
 
@@ -38,7 +38,7 @@ library LibBit {
     function setRight(uint256 x, uint256 y) internal pure returns (uint256 r) {
         /// @solidity memory-safe-assembly
         assembly {
-            r := or(and(x, shl(128, not(0))), y)
+            r := or(and(x, shl(0x80, not(0))), y)
         }
     }
 
