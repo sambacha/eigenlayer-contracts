@@ -4,6 +4,11 @@ pragma solidity >=0.5.0;
 import "./ISignatureUtils.sol";
 
 interface IAVSDirectory is ISignatureUtils {
+    struct OperatorSet {
+        address avs;
+        uint32 id;
+    }
+
     struct MemberInfo {
         uint248 inTotalSets;
         bool isLegacyOperator;
