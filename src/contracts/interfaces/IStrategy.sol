@@ -95,6 +95,6 @@ interface IStrategy {
     /// @notice Returns either a brief string explaining the strategy's goal & purpose, or a link to metadata that explains in more detail.
     function explanation() external view returns (string memory);
 
-    /// @notice Emits the current exchange rate denominated in wad (18 decimals).
+    /// @notice Emits the current exchange rate denominated in underlyingToken.
     function updateExchangeRate() external;
 }

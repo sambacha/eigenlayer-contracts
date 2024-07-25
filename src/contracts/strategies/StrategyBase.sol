@@ -289,7 +289,7 @@ contract StrategyBase is Initializable, Pausable, IStrategy {
         return underlyingToken.balanceOf(address(this));
     }
 
-    /// @notice Emits the current exchange rate denominated in wad (18 decimals).
+    /// @notice Emits the current exchange rate denominated in underlyingToken.
     function updateExchangeRate() public virtual {
         // Cache virtual shares and balance.
         uint256 virtualTotalShares = totalShares + SHARES_OFFSET;
