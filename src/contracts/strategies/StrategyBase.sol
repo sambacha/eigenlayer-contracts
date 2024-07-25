@@ -4,6 +4,8 @@ pragma solidity ^0.8.12;
 import "../interfaces/IStrategyManager.sol";
 import "../permissions/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin-upgrades/contracts/proxy/utils/Initializable.sol";
 
@@ -288,12 +290,13 @@ contract StrategyBase is Initializable, Pausable, IStrategy {
     }
 
     /// @notice Emits the current exchange rate denominated in wad (18 decimals).
-    function emitExchangeRate() public virtual {
+    function updateExchangeRate() public virtual {
         // Cache virtual shares and balance.
         uint256 virtualTotalShares = totalShares + SHARES_OFFSET;
         uint256 virtualTokenBalance = _tokenBalance() + BALANCE_OFFSET;
+        uint8 decimals = IERC20Metadata(address(underlyingToken)).decimals();
         // Emit asset over shares ratio.
-        emit LogExchangeRate(1e18 * virtualTokenBalance / virtualTotalShares);
+        emit UpdateExchangeRate(decimals, (10 ** decimals) * virtualTokenBalance / virtualTotalShares);
     }
 
     /**
