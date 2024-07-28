@@ -4,6 +4,10 @@ pragma solidity ^0.8.12;
 import "@openzeppelin-upgrades/contracts/proxy/utils/Initializable.sol";
 import "@openzeppelin-upgrades/contracts/access/OwnableUpgradeable.sol";
 import "@openzeppelin-upgrades/contracts/security/ReentrancyGuardUpgradeable.sol";
+
+import {CheckpointsUpgradeable} from "@openzeppelin-upgrades-v4.9.0/contracts/utils/CheckpointsUpgradeable.sol";
+import {MagnitudeUtils} from "../libraries/MagnitudeUtils.sol";
+
 import "../permissions/Pausable.sol";
 import "../libraries/EIP1271SignatureUtils.sol";
 import "./AVSDirectoryStorage.sol";
@@ -490,4 +494,27 @@ contract AVSDirectory is
     function _calculateDigestHash(bytes32 structHash) internal view returns (bytes32) {
         return keccak256(abi.encodePacked("\x19\x01", _calculateDomainSeparator(), structHash));
     }
+
+
+    /**
+     *
+     *                         ALLOCATOR AND SLASHING FUNCTIONS
+     *
+     */
+
+
+    using CheckpointsUpgradeable for CheckpointsUpgradeable.History;
+    using MagnitudeUtils for uint224;
+
+    /// (operator, strategy, OperatorSet) => list of allocators
+    /// mapping: operator => Strategy => avs => operatorSetId => allocator[]
+    mapping(address => mapping(IStrategy => mapping(address => mapping(uint32 => address[])))) private _operatorAllocators;
+
+    /// (allocator, strategy, timestamp) => totalMagnitude
+    /// mapping: allocator => strategy => CheckpointsUpgradeable.History;
+    mapping(address => mapping(IStrategy => CheckpointsUpgradeable.History)) private _checkedpointedtotalAndNonslashableMagnitude;
+
+    /// (allocator, strategy, OperatorSet) => CheckpointsUpgradeable.History
+    /// mapping: allocator => strategy => avs => operatorSetId => CheckpointsUpgradeable.History
+    mapping(address => mapping(IStrategy => mapping(address => mapping(uint32 => CheckpointsUpgradeable.History)))) checkpointedMagnitude;
 }
